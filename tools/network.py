@@ -13,9 +13,12 @@ def validate_region(region: str) -> dict:
 
 def check_network_status(region: str) -> dict:
     fake_status = {
-        "india": "Operational",
-        "us": "Degraded",
-        "europe": "Down"
+        "west_india": "Degraded",
+        "north_india": "Operational",
+        "south_india": "Operational",
+        "east_india": "Down",
+        "east_india": "Down",
+        "east_india": "Down",
     }
 
     return {
@@ -26,10 +29,11 @@ def check_network_status(region: str) -> dict:
 
 def suggest_resolution(status: str) -> dict:
     if status == "Operational":
-        return {"resolution": "Restart router and recheck"}
+        return {"resolution": "No major outage detected. Restart router and recheck speed."}
     if status == "Degraded":
-        return {"resolution": "Issue under observation"}
+        return {"resolution": "Network congestion detected in your area. Engineers are working on it."}
     if status == "Down":
-        return {"resolution": "Outage detected in your area. Contact ISP."}
+        return {"resolution": "Outage confirmed in your area. Expected resolution within 24 hours."}
 
-    return {"resolution": "Unable to determine resolution"}
+    return {"resolution": "We are unable to determine the issue. Please contact support."}
+
