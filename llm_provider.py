@@ -1,13 +1,20 @@
 import os
-from logger import logger
-from mock.llm import MockLLM
-from real.llm import GeminiLLM
-
+from llm.mock.llm import MockLLM
+from llm.local.phi3_llm import Phi3LLM
+from llm.real.gemini_llm import GeminiLLM, QuotaExceededError
 
 def get_llm():
-    if os.getenv("USE_REAL_LLM") == "true":
-        logger.info("LLM MODE: REAL (Gemini)")
+    mode = os.getenv("LLM_MODE", "mock")
+    print(f"[LLM_PROVIDER] Using LLM_MODE={mode}")
+
+    if mode == "mock":
+        return MockLLM()
+
+    if mode == "local":
+        return Phi3LLM()
+
+    if mode == "prod":
         return GeminiLLM()
 
-    logger.info("LLM MODE: MOCK")
-    return MockLLM()
+    raise ValueError(f"Unknown LLM_MODE: {mode}")
+

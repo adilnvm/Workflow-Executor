@@ -4,8 +4,10 @@ from executor.workflow_executor import execute_workflow
 from logger import logger
 
 from utils.slot_checker import get_missing_slot   # ← ADDED (Phase-3.2)
-
 from utils.decision_context import build_decision_context # ← ADDED (Phase-3.3)
+
+from llm.local.phi3_llm import Phi3LLM
+from llm.real.gemini_llm import QuotaExceededError
 
 import uuid
 
@@ -19,9 +21,23 @@ TICKET_STORE = {}
 #   }
 # }
 
+STABLE_FACTS = {
+    "service_type",
+    "account_type",
+    "device_type",
+    "connection_type",
+    "region"
+}
 
 llm = get_llm()
 
+
+# woah woah woah woah hey hey hey
+# try:
+#     llm_output = llm.generate(combined_message)
+# except QuotaExceededError:   #ERROR : "QuotaExceededError" is not defined
+#     logger.warning("Gemini quota exhausted → falling back to Phi-3")
+#     llm_output = Phi3LLM().generate(combined_message)  #ERROR : "Phi3LLM" is not defined , combined_message is not defined
 
 def run_workflow(message: str, ticket_id: str | None = None) -> dict:
     logger.info(f"Incoming message: {message}")
@@ -43,9 +59,9 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             "last_decision": decision
         }
 
-        # store known facts
+        # store stable facts only
         for key, value in decision["entities"].items():
-            if value != "unknown":
+            if key in STABLE_FACTS and value != "unknown":
                 TICKET_STORE[ticket_id]["facts"][key] = value
 
     # ──────────────────────────────
@@ -66,18 +82,24 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         # merge clarification with original context
         combined_message = build_decision_context(prev, message)
 
-
+        # LLM decision
         llm_output = llm.generate(combined_message)
         decision = llm_output.tool_call
 
-        # merge new facts
+        # ──────────────────────────────
+        # Phase-4.1: Persist stable facts
+        # ──────────────────────────────
+        facts = prev["facts"]
+
         for key, value in decision["entities"].items():
-            if value != "unknown":
-                prev["facts"][key] = value
+            if key in STABLE_FACTS and value != "unknown":
+                facts[key] = value
 
         prev["last_decision"] = decision
 
     logger.info(f"LLM decision: {decision}")
+
+    #oh god
 
     # ──────────────────────────────
     # 3. Ask clarification
@@ -101,7 +123,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
     # ──────────────────────────────
     # 3.2 SLOT-BASED CLARIFICATION (Phase-3.2)
     # ──────────────────────────────
-
     facts = TICKET_STORE[ticket_id]["facts"]
     workflow_name = decision["workflow"]
 
@@ -126,7 +147,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
     # ──────────────────────────────
     # 4. REGION-MAPPING (Phase-3)
     # ──────────────────────────────
-
     from utils.region_mapper import normalize_region
 
     context = facts.copy()
@@ -138,9 +158,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
     )
 
     context["region"] = normalize_region(city)
-
-    # ──────────────────────────────
-    # ──────────────────────────────
 
     #//////////////////////////////////////////////////////
     #-------------------safety net-------------------------
