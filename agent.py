@@ -9,6 +9,9 @@ from utils.decision_context import build_decision_context # ← ADDED (Phase-3.3
 from llm.local.phi3_llm import Phi3LLM
 from llm.real.gemini_llm import QuotaExceededError
 
+from utils.inference_engine import infer_facts
+
+
 import uuid
 
 TICKET_STORE = {}
@@ -43,22 +46,49 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
     logger.info(f"Incoming message: {message}")
 
     # ──────────────────────────────
+    # 🔒 SAFETY: handle lost in-memory tickets (reload / crash)
+    # ──────────────────────────────
+    if ticket_id is not None and ticket_id not in TICKET_STORE:
+        logger.warning("Unknown ticket_id (store reset) → starting new session")
+        ticket_id = None
+
+
+    # ──────────────────────────────
     # 1. New ticket
     # ──────────────────────────────
     if ticket_id is None:
         ticket_id = str(uuid.uuid4())
 
+
         llm_output = llm.generate(message)
         decision = llm_output.tool_call
 
-        # store decision for continuation
-        # INITIALIZING MEMORY
+        # INITIALIZE MEMORY FIRST
         TICKET_STORE[ticket_id] = {
             "facts": {},
             "history": [message],
             "last_decision": decision
         }
+        
+        # ──────────────────────────────
+        # Phase-5 inference (SAFE, reversible)
+        # ──────────────────────────────
+        inferred = infer_facts(
+            intent=decision["intent"],
+            entities=decision["entities"],
+            history=TICKET_STORE[ticket_id]["history"]
+        )
 
+        # Merge inferred facts (do NOT override real facts)
+        for k, v in inferred.items():
+            if k not in TICKET_STORE[ticket_id]["facts"]:
+                TICKET_STORE[ticket_id]["facts"][k] = v
+        
+        #inference end
+        # ──────────────────────────────
+        # ──────────────────────────────
+
+        
         # store stable facts only
         for key, value in decision["entities"].items():
             if key in STABLE_FACTS and value != "unknown":
@@ -86,6 +116,9 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         llm_output = llm.generate(combined_message)
         decision = llm_output.tool_call
 
+        # normalize issue_type from intent
+        if "issue_type" not in decision["entities"]:
+            decision["entities"]["issue_type"] = decision["intent"]
         # ──────────────────────────────
         # Phase-4.1: Persist stable facts
         # ──────────────────────────────

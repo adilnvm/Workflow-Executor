@@ -122,13 +122,13 @@ Return JSON only.
 
         result = subprocess.run(
             ["ollama", "run", "phi3"],
-            input=prompt,
+            input=prompt.encode("utf-8"),
             capture_output=True,
-            text=True,
             timeout=30
         )
 
-        raw = result.stdout.strip()
+        raw = result.stdout.decode("utf-8", errors="ignore").strip()
+
 
         try:
             data = json.loads(raw)
