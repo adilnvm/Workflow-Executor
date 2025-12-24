@@ -1,6 +1,6 @@
 <!-- this is /docs/inavriants.md -->
-
-
+### could be more invariants tho
+### checkout #8 and #9 XD
 # System Invariants — Workflow Executor
 
 ### Invariants = things that must never break, regardless of LLM quality.
