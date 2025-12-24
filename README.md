@@ -7,6 +7,9 @@ The architecture is intentionally product-oriented so it can later be extended, 
 
 ---
 
+#### To see the design up untill phase 5 view [ `/docs/ARCHITECTURE.md`](https://github.com/adilnvm/Workflow-Executor/blob/main/docs/ARCHITECTURE.md)...huh
+
+
 ## 1. Core Idea
 
 The system enforces a strict separation of responsibilities:

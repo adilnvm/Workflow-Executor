@@ -1,15 +1,13 @@
-from workflow.slots import WORKFLOW_SLOTS
+from utils.slot_questions import SLOT_QUESTIONS
 
+def get_missing_slot(workflow_name: str, facts: dict) -> tuple[str | None, str | None]:
+    REQUIRED_SLOTS = {
+        "network_troubleshooting_workflow": ["region", "issue_type"],
+        "billing_explanation_workflow": ["account_type"],
+    }
 
-def get_missing_slot(workflow_name: str, facts: dict):
-    workflow = WORKFLOW_SLOTS.get(workflow_name)
-
-    if not workflow:
-        return None, None
-
-    for slot in workflow["required"]:
-        if slot not in facts or facts[slot] == "unknown":
-            question = workflow["questions"].get(slot)
-            return slot, question
+    for slot in REQUIRED_SLOTS.get(workflow_name, []):
+        if slot not in facts:
+            return slot, SLOT_QUESTIONS[slot]
 
     return None, None
