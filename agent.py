@@ -307,9 +307,8 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             event_type="rollback_triggered",
             ticket_id=ticket_id,
             payload={
-                "error": str(Exception);
-            }
-        ))
+                "error": str(Exception)
+            }))
         # ──────────────────────────────
 
         return {

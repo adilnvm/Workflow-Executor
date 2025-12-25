@@ -13,7 +13,7 @@ def get_llm():
     if mode == "local":
         return Phi3LLM()
 
-    if mode == "prod":
+    if mode == "prod" or mode == "real":
         return GeminiLLM()
 
     raise ValueError(f"Unknown LLM_MODE: {mode}")
