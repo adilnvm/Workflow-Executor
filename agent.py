@@ -16,15 +16,28 @@ from utils.inference_engine import infer_facts
 import copy
 import uuid
 
-TICKET_STORE = {}
-# Structure:
-# {
-#   ticket_id: {
-#     "facts": {},
-#     "history": [],
-#     "last_decision": {}
-#   }
-# }
+# ──────────────────────────────
+# this was moved to storage/store_provider.py for persistence 
+# after phase-5 redis is used for ticket storage (persistence across restarts)
+# NOTE - InMemoryTicketStore is still used as a fallback if Redis is unavailable
+# ──────────────────────────────
+
+# TICKET_STORE = {}
+# # Structure:
+# # {
+# #   ticket_id: {
+# #     "facts": {},
+# #     "history": [],
+# #     "last_decision": {}
+# #   }
+# # }
+
+# ──────────────────────────────
+# ──────────────────────────────
+from storage.store_provider import get_ticket_store
+
+ticket_store = get_ticket_store()
+
 
 STABLE_FACTS = {
     "service_type",
@@ -49,18 +62,18 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
     logger.info(f"Incoming message: {message}")
 
     # ──────────────────────────────
-    # 🔒 SAFETY: snapshot ticket before processing
+    # 🔒 SAFETY: snapshot ticket before processing 
     # ──────────────────────────────
     ticket_snapshot = copy.deepcopy(
-        TICKET_STORE.get(ticket_id)
+        ticket_store.get(ticket_id) if ticket_id else None
     )
 
     try:
         # ──────────────────────────────
-        # 🔒 SAFETY: handle lost in-memory tickets (reload / crash)
+        # 🔒 SAFETY: handle lost tickets (restart / TTL / crash) ...gpt you rock!!
         # ──────────────────────────────
-        if ticket_id is not None and ticket_id not in TICKET_STORE:
-            logger.warning("Unknown ticket_id (store reset) → starting new session")
+        if ticket_id is not None and not ticket_store.exists(ticket_id):
+            logger.warning("Unknown ticket_id → starting new session")
             ticket_id = None
 
         # ──────────────────────────────
@@ -73,11 +86,13 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             decision = llm_output.tool_call
 
             # INITIALIZE MEMORY FIRST
-            TICKET_STORE[ticket_id] = {
+            ticket_store.set(ticket_id, {
                 "facts": {},
                 "history": [message],
                 "last_decision": decision
-            }
+            })
+
+            ticket = ticket_store.get(ticket_id)
 
             # ──────────────────────────────
             # Phase-5 inference (SAFE, reversible)
@@ -85,28 +100,26 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             inferred = infer_facts(
                 intent=decision["intent"],
                 entities=decision["entities"],
-                history=TICKET_STORE[ticket_id]["history"]
+                history=ticket["history"]
             )
 
             # Merge inferred facts (do NOT override real facts)
             for k, v in inferred.items():
-                if k not in TICKET_STORE[ticket_id]["facts"]:
-                    TICKET_STORE[ticket_id]["facts"][k] = v
-
-            #inference end
-            # ──────────────────────────────
-            # ──────────────────────────────
+                if k not in ticket["facts"]:
+                    ticket["facts"][k] = v
 
             # store stable facts only
             for key, value in decision["entities"].items():
                 if key in STABLE_FACTS and value != "unknown":
-                    TICKET_STORE[ticket_id]["facts"][key] = value
+                    ticket["facts"][key] = value
+
+            ticket_store.set(ticket_id, ticket)
 
         # ──────────────────────────────
         # 2. Clarification reply
         # ──────────────────────────────
         else:
-            prev = TICKET_STORE.get(ticket_id)
+            prev = ticket_store.get(ticket_id)
 
             if not prev:
                 return {
@@ -120,7 +133,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             # merge clarification with original context
             combined_message = build_decision_context(prev, message)
 
-            # LLM decision
             llm_output = llm.generate(combined_message)
             decision = llm_output.tool_call
 
@@ -131,13 +143,12 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             # ──────────────────────────────
             # Phase-4.1: Persist stable facts
             # ──────────────────────────────
-            facts = prev["facts"]
-
             for key, value in decision["entities"].items():
                 if key in STABLE_FACTS and value != "unknown":
-                    facts[key] = value
+                    prev["facts"][key] = value
 
             prev["last_decision"] = decision
+            ticket_store.set(ticket_id, prev)
 
         logger.info(f"LLM decision: {decision}")
 
@@ -148,7 +159,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         # ──────────────────────────────
         CONFIDENCE_THRESHOLD = 0.6
 
-        # Ask clarification ONLY if confidence is low
         if (
             decision["next_action"] == "ask_clarification"
             and decision["confidence"] < CONFIDENCE_THRESHOLD
@@ -165,7 +175,8 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         # ──────────────────────────────
         # 3.2 SLOT-BASED CLARIFICATION (Phase-3.2)
         # ──────────────────────────────
-        facts = TICKET_STORE[ticket_id]["facts"]
+        ticket = ticket_store.get(ticket_id)
+        facts = ticket["facts"]
         workflow_name = decision["workflow"]
 
         missing_slot, question = get_missing_slot(workflow_name, facts)
@@ -203,7 +214,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
 
         #//////////////////////////////////////////////////////
         #-------------------safety net-------------------------
-        # Force optimistic execution if intent is known
         if decision["intent"] != "unknown" and decision["confidence"] >= CONFIDENCE_THRESHOLD:
             decision["next_action"] = "execute_workflow"
         #------------------------------------------------------
@@ -219,16 +229,16 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             "confidence": decision["confidence"]
         }
 
-    except Exception as e:
+    except Exception:
         # ──────────────────────────────
         # Phase-5 rollback on failure
         # ──────────────────────────────
         logger.exception("Phase-5 failure → rolling back ticket state")
 
         if ticket_snapshot is not None:
-            TICKET_STORE[ticket_id] = ticket_snapshot
+            ticket_store.set(ticket_id, ticket_snapshot)
         else:
-            TICKET_STORE.pop(ticket_id, None)
+            ticket_store.delete(ticket_id)
 
         return {
             "summary": "Something went wrong while processing your request. Please try again.",
@@ -240,5 +250,4 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         }
 
 
-
-# meh 
+# meh
