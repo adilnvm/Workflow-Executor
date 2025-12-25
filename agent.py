@@ -16,6 +16,10 @@ from utils.inference_engine import infer_facts
 import copy
 import uuid
 
+from observability.bus import bus
+from observability.event import ObservabilityEvent
+
+
 # ──────────────────────────────
 # this was moved to storage/store_provider.py for persistence 
 # after phase-5 redis is used for ticket storage (persistence across restarts)
@@ -82,8 +86,27 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         if ticket_id is None:
             ticket_id = str(uuid.uuid4())
 
+            # Emit observability event
+
+            bus.emit(ObservabilityEvent.create(
+            event_type="ticket_created",
+            ticket_id=ticket_id,
+            payload={"message": message}
+            ))
+
+
             llm_output = llm.generate(message)
-            decision = llm_output.tool_call
+            decision = llm_output.tool_call  # expect JSON response ....dis is whre the LLM decision is made
+            bus.emit(ObservabilityEvent.create(
+                event_type="llm_decision_made",
+                ticket_id=ticket_id,
+                payload={
+                    "intent": decision["intent"],
+                    "confidence": decision["confidence"],
+                    "workflow": decision["workflow"]
+                }
+            ))
+
 
             # INITIALIZE MEMORY FIRST
             ticket_store.set(ticket_id, {
@@ -163,6 +186,17 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             decision["next_action"] == "ask_clarification"
             and decision["confidence"] < CONFIDENCE_THRESHOLD
         ):
+            # ──────────────────────────────
+            # 3.1 FREEFORM CLARIFICATION (Phase-3.1)
+            # Emit observability event
+            bus.emit(ObservabilityEvent.create(
+                event_type="clarification_asked",
+                ticket_id=ticket_id,
+                payload={
+                    "question": decision["clarification_question"]
+                }
+            ))
+
             return {
                 "summary": decision["clarification_question"],
                 "workflow_result": {
@@ -182,6 +216,18 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         missing_slot, question = get_missing_slot(workflow_name, facts)
 
         if missing_slot:
+
+            #---------------------------------------------
+            # Emit observability event
+            bus.emit(ObservabilityEvent.create(
+                event_type="slot_missing",
+                ticket_id=ticket_id,
+                payload={
+                    "workflow": workflow_name,
+                    "slot": missing_slot
+                }
+            ))
+
             return {
                 "summary": question,
                 "workflow_result": {
@@ -217,6 +263,21 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         if decision["intent"] != "unknown" and decision["confidence"] >= CONFIDENCE_THRESHOLD:
             decision["next_action"] = "execute_workflow"
         #------------------------------------------------------
+        #//////////////////////////////////////////////////////
+
+
+        # ──────────────────────────────
+        # Emit observability event
+
+        bus.emit(ObservabilityEvent.create(
+            event_type="workflow_selected",
+            ticket_id=ticket_id,
+            payload={
+                "workflow": decision["workflow"],
+                "context": context
+            }
+        ))
+        # ──────────────────────────────
 
         result = execute_workflow(workflow, context)
 
@@ -239,6 +300,17 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             ticket_store.set(ticket_id, ticket_snapshot)
         else:
             ticket_store.delete(ticket_id)
+
+        # ─────────────────────────────
+        # Emit observability event
+        bus.emit(ObservabilityEvent.create(
+            event_type="rollback_triggered",
+            ticket_id=ticket_id,
+            payload={
+                "error": str(Exception);
+            }
+        ))
+        # ──────────────────────────────
 
         return {
             "summary": "Something went wrong while processing your request. Please try again.",

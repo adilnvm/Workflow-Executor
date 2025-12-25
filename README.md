@@ -7,7 +7,9 @@ The architecture is intentionally product-oriented so it can later be extended, 
 
 ---
 
-#### To see the design up untill phase 5 view [ `/docs/ARCHITECTURE.md`](https://github.com/adilnvm/Workflow-Executor/blob/main/docs/ARCHITECTURE.md)...huh
+#### To see the Architecture up untill phase 7 view [ `/docs/ARCHITECTURE.md`](https://github.com/adilnvm/Workflow-Executor/blob/main/docs/ARCHITECTURE.md)
+#### To view the **invariants** : [ `/docs/INVARIANTS.md`](https://github.com/adilnvm/Workflow-Executor/blob/main/docs/INVARIANTS.md)
+..huh
 
 
 ## 1. Core Idea

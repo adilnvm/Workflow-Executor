@@ -1,154 +1,357 @@
-# ARCHITECTURE.md — Phase-5 Invariants
+# Architecture Overview — Workflow Executor (Telecom LLM System)
 
-## System: Agentic Workflow Executor (Telecom Support)
+## 1. What This System Is
 
-### 1. Ticket Lifecycle Invariants
+This project is a **stateful, LLM-driven workflow engine** designed for telecom customer support (India-first, Jio-focused).
 
-- A ticket is the unit of truth
-- Every request belongs to exactly one ticket
-- Tickets may be resumed, clarified, or retried
-- Tickets must degrade gracefully
+It is **not a chatbot**.
+It is a **decision system** that:
 
-**If memory is lost (restart / crash):**
-- The system must NOT 500
-- The ticket must restart cleanly
-- Unknown ticket_id → treated as a new ticket
+* Classifies user issues
+* Extracts and accumulates facts across turns
+* Executes deterministic workflows
+* Survives LLM failures, restarts, and partial information
 
-**Ticket state must never corrupt**
-- Partial updates are forbidden
-- On any failure:
-  - Ticket state is rolled back
-  - Previous stable state is restored
+The architecture follows **production-grade conversational systems**, not demo assistants.
 
-### 2. LLM Invariants
+---
 
-- Agent is LLM-agnostic
-- Agent logic must not depend on:
-  - Gemini
-  - Phi-3
-  - Mock
+## 2. Core Design Principles (Non-Negotiable Invariants)
 
-**All LLMs MUST expose:**
-- `generate(prompt: str) → LLMResponse`
+These invariants must **never break**, regardless of future phases.
 
-**LLMs may fail, system must not**
-- Quota exhaustion
-- Local model crashes
-- Invalid JSON
-- → Must never propagate as 500 errors
+### 2.1 LLM-Agnostic Core
 
-### 3. Decision Invariants
+* The agent must not depend on a specific LLM
+* All LLMs implement the same interface:
 
-- Intent and workflow are distinct
-  - Intent = user problem
-  - Workflow = system response plan
-- One intent may map to multiple workflows later
+```
+generate(prompt: str) -> LLMResponse
+```
 
-**Confidence reflects clarity of intent**
-- Missing entities MUST NOT reduce confidence
-- Only unclear problem type lowers confidence
+This enables:
 
-**Clarification is NOT chat**
-- Clarification exists only to fill missing slots
-- Every clarification must correspond to exactly one slot
+* Gemini (prod)
+* Phi-3 via Ollama (local/dev)
+* MockLLM (tests)
 
-### 4. Slot & Entity Invariants
+No agent logic changes when switching LLMs.
 
-- Slots are workflow-defined
-- Workflows declare required slots
-- Agent asks only for missing slots
-- Never ask generic questions
+---
 
-**Derived slots are first-class**
-- Some slots may be inferred
+### 2.2 Deterministic Execution
 
-**Inferred slots:**
-- Must be reversible
-- Must never override user-provided facts
+* LLMs **decide**, they do not **act**
+* All real actions happen inside workflows
+* Workflows are deterministic, testable, and side-effect controlled
 
-**Stable facts persist across turns**  
-Examples:
-- `service_type`
-- `account_type`
-- `device_type`
-- `region`
+LLMs never:
 
-Once known → never discarded
+* Call APIs
+* Touch databases
+* Execute tools directly
 
-### 5. Execution Invariants
+---
 
-- Execution is deterministic
-  - LLMs decide
-  - Code executes
-- LLMs never execute tools directly
+### 2.3 Explicit State Ownership
 
-**Optimistic execution is allowed**
-- If intent is clear and confidence ≥ threshold
-- Missing non-critical slots may be deferred
+* The system owns state, not the LLM
+* Tickets persist facts, history, and decisions
+* LLM output is advisory, never authoritative
 
-### 6. Failure & Rollback Invariants
+---
 
-- Every mutation is transactional
-  - Before mutation → snapshot
-  - On failure → rollback
+### 2.4 Graceful Degradation
 
-- No failure may poison future turns
-- A failed step must not affect:
-  - Next clarification
-  - Next workflow
-  - Ticket continuity
+The system must always respond meaningfully, even if:
 
-### 7. Observability Invariants
+* LLM fails
+* Quota is exhausted
+* Server restarts
+* Memory is lost
 
-- Every decision is inspectable
-  - Intent
-  - Confidence
-  - Entities
-  - Workflow
-  - Next action
+This is achieved via:
 
-- Agent behavior must be explainable
-- No hidden reasoning
-- No silent state changes
+* Fallback LLMs
+* Slot-based clarification
+* Ticket rollback
+* In-memory fallback for persistence
 
-**End of Architecture Contract**
+---
 
-## Why Phase-5 Was Important (what you actually learned)
+## 3. High-Level Architecture
 
-**Before Phase-5, systems usually:**
-- “work” until they don’t
-- fail in confusing ways
-- corrupt state silently
+```
+Client
+  ↓
+FastAPI Controller
+  ↓
+Agent (State + Decisions)
+  ↓
+Workflow Executor
+  ↓
+Tools (Deterministic)
+```
 
-**After Phase-5:**
-- You learned transactional thinking
-- You separated decision vs execution
-- You learned how real agents avoid hallucination-driven damage
-- You stopped treating LLMs as reliable components
+Parallel concern:
 
-This is senior-level engineering thinking.
+```
+Agent → Observability Event Bus
+```
 
-## Phase-6: Persistence (what changes, what doesn’t)
+---
 
-### What Phase-6 WILL change
-- `TICKET_STORE` moves out of memory
-- Tickets survive restarts
-- Multiple workers can share state
+## 4. Key Components
 
-### What Phase-6 will NOT change
-- Agent logic
-- Invariants
-- Workflows
-- Slot logic
-- Rollback semantics
+### 4.1 Agent (`agent.py`)
 
-**If Phase-6 breaks Phase-5 invariants → Phase-6 is wrong**
+**Responsibilities:**
 
-### Phase-6 Options 
-####  ..idk wht to choose, gpt gave me options :)
+* Ticket lifecycle management
+* LLM orchestration
+* Fact accumulation
+* Slot enforcement
+* Rollback on failure
 
-| Option    | When to use             | Why                              |
-|-----------|-------------------------|----------------------------------|
-| SQLite    | Learning / single machine | Simple, visible, debuggable     |
-| Redis     | Multi-worker / prod-like  | Fast, TTLs, session-like        |
-| Postgres  | Enterprise              | Auditing, analytics             |
+The agent:
+
+* Never executes business logic directly
+* Never embeds observability logic
+* Never depends on a specific LLM
+
+---
+
+### 4.2 LLM Layer (`llm/`)
+
+#### Base Interface
+
+```
+BaseLLM.generate(prompt) -> LLMResponse
+```
+
+#### Implementations
+
+* `GeminiLLM` (prod, quota-aware)
+* `Phi3LLM` (local via Ollama)
+* `MockLLM` (tests)
+
+LLMs only:
+
+* Interpret language
+* Produce structured decisions
+
+---
+
+### 4.3 Ticket Store (Phase-6)
+
+Abstracted via:
+
+```
+storage/store_provider.py
+```
+
+Implementations:
+
+* RedisTicketStore (primary)
+* InMemoryTicketStore (fallback)
+
+**Why fallback matters:**
+
+* DEV works without Redis
+* Graceful failure in prod
+* Zero downtime during infra issues
+
+---
+
+### 4.4 Decision Schema
+
+All LLMs must emit:
+
+```
+{
+  intent,
+  confidence,
+  entities,
+  workflow,
+  next_action,
+  clarification_question
+}
+```
+
+Strict validation ensures:
+
+* No hallucinated behavior
+* Predictable routing
+
+---
+
+### 4.5 Slot-Based Clarification (Phase-3.2)
+
+Each workflow declares required slots.
+
+The agent:
+
+* Checks missing slots
+* Asks targeted questions
+* Ensures each clarification fills exactly one slot
+
+This prevents:
+
+* Infinite clarification loops
+* Ambiguous conversations
+
+---
+
+### 4.6 Inference Engine (Phase-5)
+
+Purpose:
+
+* Infer safe, reversible facts
+* Reduce user friction
+
+Rules:
+
+* Never overwrite user-provided facts
+* Fully rollbackable
+* Optional, confidence-bounded
+
+---
+
+### 4.7 Workflow Executor
+
+Workflows are:
+
+* Declarative
+* Step-based
+* Deterministic
+
+Example steps:
+
+* validate_region
+* check_network_status
+* suggest_resolution
+
+No LLM involvement here.
+
+---
+
+### 4.8 Observability (Phase-7)
+
+**What it is:**
+
+* Event-based instrumentation
+
+**What it is NOT:**
+
+* Logging sprinkled everywhere
+* Business logic coupling
+
+Events capture:
+
+* Ticket lifecycle
+* LLM decisions
+* Slot misses
+* Rollbacks
+
+Designed for:
+
+* Replay
+* Metrics
+* Debugging
+* Future analytics
+
+---
+
+## 5. Phase Breakdown (What We Built)
+
+### Phase 1–2
+
+* Basic LLM decision routing
+* Workflow execution
+
+### Phase 3
+
+* Memory (facts + history)
+* Slot-based clarification
+* Decision re-evaluation
+
+### Phase 4
+
+* Stable vs volatile fact separation
+
+### Phase 5
+
+* Inference engine
+* Rollback safety
+
+### Phase 6
+
+* Redis persistence
+* In-memory fallback
+
+### Phase 7
+
+* Observability event architecture
+
+---
+
+## 6. What the Final Product Looks Like
+
+A system that:
+
+* Handles incomplete user input gracefully
+* Works with or without LLM availability
+* Persists state across restarts
+* Can be audited, replayed, and improved
+
+This is **backend infrastructure**, not UI.
+
+---
+
+## 7. Future Roadmap
+
+### Phase 8
+
+* Persist observability events
+* Metrics aggregation
+* Dashboards
+
+### Phase 9
+
+* Ticket replay engine
+* Prompt improvement loops
+* Failure-driven learning
+
+### Phase 10 (Optional)
+
+* LangChain (only if orchestration complexity increases)
+
+---
+
+## 8. LangChain — Why It Is Optional Here
+
+This system already implements:
+
+* Memory
+* Routing
+* Tool execution
+* State control
+
+LangChain becomes useful only if:
+
+* Multi-agent planning is added
+* Dynamic tool graphs emerge
+
+Until then, **pure Python is simpler, clearer, and safer**.
+
+---
+
+## 9. Final Takeaway
+
+This project is **not about calling LLMs**.
+
+It is about:
+
+> Building a fault-tolerant, stateful decision system where LLMs are replaceable components.
+
+That is what production AI systems actually look like.
