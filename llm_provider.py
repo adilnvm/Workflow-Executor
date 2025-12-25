@@ -2,6 +2,7 @@ import os
 from llm.mock.llm import MockLLM
 from llm.local.phi3_llm import Phi3LLM
 from llm.real.gemini_llm import GeminiLLM, QuotaExceededError
+from llm.langchain.langchain_llm import LangChainLLM
 
 def get_llm():
     mode = os.getenv("LLM_MODE", "mock")
@@ -15,6 +16,9 @@ def get_llm():
 
     if mode == "prod":
         return GeminiLLM()
+
+    if mode == "langchain":
+        return LangChainLLM()
 
     raise ValueError(f"Unknown LLM_MODE: {mode}")
 
