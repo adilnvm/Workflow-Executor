@@ -3,3 +3,6 @@ uvicorn
 pydantic
 google-generativeai
 python-dotenv
+langchain>=0.3.25
+langchain-core>=0.3.85
+langchain-google-genai>=2.1.4
