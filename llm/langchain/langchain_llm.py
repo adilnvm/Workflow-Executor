@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnablePassthrough
 from schemas.decision import Decision
 from schemas import LLMResponse
 from llm.base import BaseLLM
+from logger import logger
 
 
 SYSTEM_PROMPT = """You are an AI decision engine for telecom customer support in India.
@@ -154,7 +155,10 @@ class LangChainLLM(BaseLLM):
                 tool_call=decision.model_dump()
             )
 
-        except Exception:
+        except Exception as e:
+            # Log the exception for debugging
+            logger.warning(f"LangChain LLM error: {e} → falling back to clarification")
+
             # Fallback on any parsing or API error
             decision = Decision(
                 intent="unknown",
