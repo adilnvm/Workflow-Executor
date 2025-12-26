@@ -1,5 +1,12 @@
 from utils.slot_questions import SLOT_QUESTIONS
 
+
+#slot philosophy 
+# If workflow can execute → execute
+# Else → ask ONE targeted question
+
+
+
 # utils/slot_checker.py
 
 """
@@ -14,18 +21,10 @@ RULES:
 
 # Workflow → required execution slots
 REQUIRED_SLOTS = {
-    "network_troubleshooting_workflow": [
-        "region"
-    ],
-    "billing_explanation_workflow": [
-        "account_type"
-    ],
-    "recharge_resolution_workflow": [
-        "account_type"
-    ],
-    "sim_device_troubleshooting_workflow": [
-        "device_type"
-    ],
+    "network_troubleshooting_workflow": ["region"],
+    "billing_explanation_workflow": ["account_type"],
+    "recharge_resolution_workflow": ["account_type"],
+    "sim_device_troubleshooting_workflow": ["device_type"],
 }
 
 

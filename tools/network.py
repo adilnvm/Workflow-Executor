@@ -1,39 +1,29 @@
-def validate_region(region: str) -> dict:
-    if region == "unknown":
-        return {
-            "valid": False,
-            "message": "Unable to identify region"
-        }
+# tools/network.py
 
-    return {
-        "valid": True,
-        "region": region
+def check_outage_backend(region: str) -> dict:
+    OUTAGES = {
+        "east_india": {"status": "outage", "eta": "4 hours"},
     }
 
-
-def check_network_status(region: str) -> dict:
-    fake_status = {
-        "west_india": "Degraded",
-        "north_india": "Operational",
-        "south_india": "Operational",
-        "east_india": "Down",
-        "east_india": "Down",
-        "east_india": "Down",
-    }
-
-    return {
-        "region": region,
-        "status": fake_status.get(region, "Unknown")
-    }
+    return OUTAGES.get(region, {"status": "none"})
 
 
-def suggest_resolution(status: str) -> dict:
-    if status == "Operational":
-        return {"resolution": "No major outage detected. Restart router and recheck speed."}
-    if status == "Degraded":
-        return {"resolution": "Network congestion detected in your area. Engineers are working on it."}
-    if status == "Down":
-        return {"resolution": "Outage confirmed in your area. Expected resolution within 24 hours."}
+def check_congestion_backend(region: str) -> dict:
+    METRO_REGIONS = {"west_india", "north_india"}
 
-    return {"resolution": "We are unable to determine the issue. Please contact support."}
+    if region in METRO_REGIONS:
+        return {"status": "congested", "window": "peak hours"}
 
+    return {"status": "clear"}
+
+
+def build_resolution_message(intent: str, cause: str, data: dict) -> str:
+    if cause == "outage":
+        return f"Network outage detected in your area. Expected resolution in {data.get('eta', 'some time')}."
+
+    if cause == "congestion":
+        if intent == "slow_internet":
+            return "Network congestion detected. Speeds may improve after peak hours."
+        return "Temporary congestion detected in your area."
+
+    return "We are checking network conditions in your area."

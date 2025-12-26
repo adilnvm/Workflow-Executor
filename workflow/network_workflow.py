@@ -1,98 +1,64 @@
-NETWORK_TROUBLESHOOTING_WORKFLOW = {
-    "name": "network_troubleshooting",
-    "steps": [
-        "validate_region",
-        "check_network_status",
-        "suggest_resolution"
-    ]
-}
-
-
 # workflow/network_workflow.py
+
+from tools.network import (
+    check_outage_backend,
+    check_congestion_backend,
+    build_resolution_message
+)
 
 def network_troubleshooting_workflow(context: dict) -> dict:
     """
-    Realistic telecom network troubleshooting flow.
-
-    Required:
-        region (already validated by slot checker)
-    Optional:
-        intent
-        service_type
-        account_type
-        device_type
+    Telecom-grade Tier-1 network troubleshooting.
+    Deterministic. No LLM. No questions.
     """
-
-    steps = []
 
     region = context.get("region")
     intent = context.get("intent", "unknown")
 
-    # ──────────────────────────────
-    # Step 1: Validate region
-    # ──────────────────────────────
-    if region == "unknown":
+    steps = []
+
+    # Step 1 — Region must exist (slot checker already enforced this)
+    if not region or region == "unknown":
         return {
-            "status": "failed",
-            "reason": "region_not_provided"
+            "status": "needs_info",
+            "reason": "region_missing"
         }
 
-    steps.append({
-        "validate_region": {
-            "valid": True,
-            "region": region
+    steps.append({"region_validated": region})
+
+    # Step 2 — Outage check
+    outage = check_outage_backend(region)
+    steps.append({"outage_check": outage})
+
+    if outage["status"] == "outage":
+        return {
+            "status": "resolved",
+            "steps": steps,
+            "resolution": build_resolution_message(
+                intent=intent,
+                cause="outage",
+                data=outage
+            )
         }
-    })
 
-    # ──────────────────────────────
-    # Step 2: Check known network issues
-    # (mocked for now)
-    # ──────────────────────────────
-    network_status = "degraded"  # simulated
+    # Step 3 — Congestion check
+    congestion = check_congestion_backend(region)
+    steps.append({"congestion_check": congestion})
 
-    steps.append({
-        "check_network_status": {
-            "region": region,
-            "status": network_status
+    if congestion["status"] == "congested":
+        return {
+            "status": "resolved",
+            "steps": steps,
+            "resolution": build_resolution_message(
+                intent=intent,
+                cause="congestion",
+                data=congestion
+            )
         }
-    })
 
-    # ──────────────────────────────
-    # Step 3: Intent-based branching
-    # ──────────────────────────────
-    if intent == "call_drop":
-        resolution = (
-            "Call drops are being reported in your area. "
-            "Ensure VoLTE is enabled on your phone. "
-            "If the issue persists, our engineers are working on it."
-        )
-
-    elif intent == "slow_internet":
-        resolution = (
-            "Network congestion detected in your area. "
-            "Please try again after some time. "
-            "Restarting your device may help."
-        )
-
-    elif intent == "no_signal":
-        resolution = (
-            "No signal issue detected in your region. "
-            "Please toggle airplane mode or restart your device."
-        )
-
-    else:
-        resolution = (
-            "We are checking network conditions in your area. "
-            "Please try basic troubleshooting steps."
-        )
-
-    steps.append({
-        "suggest_resolution": {
-            "resolution": resolution
-        }
-    })
-
+    # Step 4 — Unknown → escalate
     return {
-        "status": "resolved",
-        "steps": steps
+        "status": "escalated",
+        "steps": steps,
+        "reason": "no_known_network_issue"
     }

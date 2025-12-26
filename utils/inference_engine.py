@@ -15,8 +15,15 @@ def infer_facts(intent: str, entities: dict, history: list) -> dict:
     # ──────────────────────────────
     # Rule 1: Issue type derivation
     # ──────────────────────────────
-    if intent in {"slow_internet", "network_issue", "no_signal"}:
-        inferred["issue_type"] = intent
+
+    #  Inference must NEVER recreate intent.
+    #  Inference must NEVER recreate intent.
+    # ──────────────────────────────
+
+    #  Inference must NEVER recreate intent.
+    #  Inference must NEVER recreate intent.
+    # if intent in {"slow_internet", "network_issue", "no_signal"}:
+    #     inferred["issue_type"] = intent
 
     # ──────────────────────────────
     # Rule 2: Service category

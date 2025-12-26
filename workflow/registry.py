@@ -1,9 +1,9 @@
-from workflow.network_workflow import NETWORK_TROUBLESHOOTING_WORKFLOW
+from workflow.network_workflow import network_troubleshooting_workflow
+from workflow.billing_workflow import billing_explanation_workflow
 
 WORKFLOW_REGISTRY = {
-    "network_troubleshooting_workflow": NETWORK_TROUBLESHOOTING_WORKFLOW,
-    "billing_explanation_workflow": NETWORK_TROUBLESHOOTING_WORKFLOW,
-    "recharge_resolution_workflow": NETWORK_TROUBLESHOOTING_WORKFLOW,
-    "sim_device_troubleshooting_workflow": NETWORK_TROUBLESHOOTING_WORKFLOW,
-    "clarification_workflow": NETWORK_TROUBLESHOOTING_WORKFLOW
+    "network_troubleshooting_workflow": network_troubleshooting_workflow,
+    "billing_explanation_workflow": billing_explanation_workflow,
+    "recharge_resolution_workflow": None,
+    "sim_device_troubleshooting_workflow": None,
 }

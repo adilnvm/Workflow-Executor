@@ -2,7 +2,7 @@
 
 from llm_provider import get_llm
 from workflow.registry import WORKFLOW_REGISTRY
-from executor.workflow_executor import execute_workflow
+# from executor.workflow_executor import execute_workflow
 from logger import logger
 
 from utils.slot_checker import get_missing_slot   # ← ADDED (Phase-3.2)
@@ -159,10 +159,14 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             llm_output = llm.generate(combined_message)
             decision = llm_output.tool_call
 
-            # normalize issue_type from intent
-            if "issue_type" not in decision["entities"]:
-                decision["entities"]["issue_type"] = decision["intent"]
 
+            # ──────────────────────────────
+            #fck this
+            # normalize issue_type from intent
+            # if "issue_type" not in decision["entities"]:
+            #     decision["entities"]["issue_type"] = decision["intent"]
+            # ──────────────────────────────
+            
             # ──────────────────────────────
             # Phase-4.1: Persist stable facts
             # ──────────────────────────────
@@ -176,35 +180,36 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         logger.info(f"LLM decision: {decision}")
 
         #oh god
+        #this part is commented on 26-dec , coz its causing issues with the flow
 
         # ──────────────────────────────
         # 3. Ask clarification
         # ──────────────────────────────
-        CONFIDENCE_THRESHOLD = 0.6
+        # CONFIDENCE_THRESHOLD = 0.6
 
-        if (
-            decision["next_action"] == "ask_clarification"
-            and decision["confidence"] < CONFIDENCE_THRESHOLD
-        ):
-            # ──────────────────────────────
-            # 3.1 FREEFORM CLARIFICATION (Phase-3.1)
-            # Emit observability event
-            bus.emit(ObservabilityEvent.create(
-                event_type="clarification_asked",
-                ticket_id=ticket_id,
-                payload={
-                    "question": decision["clarification_question"]
-                }
-            ))
+        # if (
+        #     decision["next_action"] == "ask_clarification"
+        #     and decision["confidence"] < CONFIDENCE_THRESHOLD
+        # ):
+        #     # ──────────────────────────────
+        #     # 3.1 FREEFORM CLARIFICATION (Phase-3.1)
+        #     # Emit observability event
+        #     bus.emit(ObservabilityEvent.create(
+        #         event_type="clarification_asked",
+        #         ticket_id=ticket_id,
+        #         payload={
+        #             "question": decision["clarification_question"]
+        #         }
+        #     ))
 
-            return {
-                "summary": decision["clarification_question"],
-                "workflow_result": {
-                    "status": "needs_info",
-                    "ticket_id": ticket_id
-                },
-                "confidence": decision["confidence"]
-            }
+        #     return {
+        #         "summary": decision["clarification_question"],
+        #         "workflow_result": {
+        #             "status": "needs_info",
+        #             "ticket_id": ticket_id
+        #         },
+        #         "confidence": decision["confidence"]
+        #     }
 
         # ──────────────────────────────
         # 3.2 SLOT-BASED CLARIFICATION (Phase-3.2)
@@ -279,7 +284,20 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         ))
         # ──────────────────────────────
 
-        result = execute_workflow(workflow, context)
+        workflow_fn = WORKFLOW_REGISTRY.get(decision["workflow"])
+
+        if workflow_fn is None:
+            return {
+                "summary": "This issue needs human support.",
+                "workflow_result": {
+                    "status": "escalated",
+                    "ticket_id": ticket_id
+                },
+                "confidence": decision["confidence"]
+            }
+
+        result = workflow_fn(context)
+
 
         return {
             "summary": "Troubleshooting completed",
