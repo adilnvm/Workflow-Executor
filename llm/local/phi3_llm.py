@@ -124,7 +124,7 @@ Return JSON only.
             ["ollama", "run", "phi3"],
             input=prompt.encode("utf-8"),
             capture_output=True,
-            timeout=30
+            timeout=121
         )
 
         raw = result.stdout.decode("utf-8", errors="ignore").strip()

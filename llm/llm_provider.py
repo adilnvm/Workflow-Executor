@@ -10,10 +10,10 @@ def get_llm():
     if mode == "mock":
         return MockLLM()
 
-    if mode == "local":
+    if mode in ["local", "phi3", "test", "dev"]:
         return Phi3LLM()
 
-    if mode == "prod" or mode == "real":
+    if mode in ["prod", "real", "gemini"]:
         return GeminiLLM()
 
     raise ValueError(f"Unknown LLM_MODE: {mode}")

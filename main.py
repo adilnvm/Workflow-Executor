@@ -39,3 +39,30 @@ def execute(query: UserQuery):
         message=query.message,
         ticket_id=query.ticket_id
     )
+
+
+
+# Metrics endpoint
+# idk hows it helpful if its stored in  memory but whatevs
+from metrics.collector import metrics
+
+@app.get("/metrics")
+def get_metrics():
+    return metrics.snapshot()
+
+
+
+# CORS middleware for cross-origin requests (if needed) 
+# [TEMPORARY: for demo purposes only] 
+
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # OK for demo ............or is it ? (VSAUCE music intensifies)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+

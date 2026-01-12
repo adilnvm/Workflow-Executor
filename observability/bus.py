@@ -1,4 +1,6 @@
 from observability.sinks.log_sink import LogEventSink
+from metrics.collector import metrics
+
 
 class ObservabilityBus:
     def __init__(self):
@@ -8,5 +10,6 @@ class ObservabilityBus:
         for sink in self.sinks:
             sink.emit(event)
 
+        metrics.record(event.event_type, event.payload)
 
 bus = ObservabilityBus()

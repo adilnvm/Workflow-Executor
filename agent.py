@@ -1,17 +1,12 @@
-#dont edit or remove any comments although you may or maynot add your own comments
 
-from llm_provider import get_llm
+from llm.llm_provider import get_llm
 from workflow.registry import WORKFLOW_REGISTRY
-# from executor.workflow_executor import execute_workflow
 from logger import logger
 
-from utils.slot_checker import get_missing_slot   # ← ADDED (Phase-3.2)
-from utils.decision_context import build_decision_context # ← ADDED (Phase-3.3)
-
-from llm.local.phi3_llm import Phi3LLM
-from llm.real.gemini_llm import QuotaExceededError
-
+from utils.slot_checker import get_missing_slot
+from utils.decision_context import build_decision_context
 from utils.inference_engine import infer_facts
+from utils.region_mapper import normalize_region
 
 import copy
 import uuid
@@ -40,8 +35,8 @@ from observability.event import ObservabilityEvent
 # ──────────────────────────────
 from storage.store_provider import get_ticket_store
 
-ticket_store = get_ticket_store()
 
+ticket_store = get_ticket_store()
 
 STABLE_FACTS = {
     "service_type",
@@ -89,11 +84,10 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             # Emit observability event
 
             bus.emit(ObservabilityEvent.create(
-            event_type="ticket_created",
-            ticket_id=ticket_id,
-            payload={"message": message}
+                event_type="ticket_created",
+                ticket_id=ticket_id,
+                payload={"message": message}
             ))
-
 
             llm_output = llm.generate(message)
             decision = llm_output.tool_call  # expect JSON response ....dis is whre the LLM decision is made
@@ -107,8 +101,6 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
                 }
             ))
 
-
-            # INITIALIZE MEMORY FIRST
             ticket_store.set(ticket_id, {
                 "facts": {},
                 "history": [message],
@@ -139,91 +131,65 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             ticket_store.set(ticket_id, ticket)
 
         # ──────────────────────────────
-        # 2. Clarification reply
+        # 2. Clarification reply (NO LLM CALL)
         # ──────────────────────────────
         else:
-            prev = ticket_store.get(ticket_id)
+            ticket = ticket_store.get(ticket_id)
 
-            if not prev:
+            if not ticket:
                 return {
                     "summary": "Session expired. Please describe your issue again.",
                     "workflow_result": {"status": "expired"},
                     "confidence": 0.0
                 }
 
-            prev["history"].append(message)
+            ticket["history"].append(message)
 
-            # merge clarification with original context
-            combined_message = build_decision_context(prev, message)
+            logger.info(f"[CLARIFICATION] message='{message}'")
 
-            llm_output = llm.generate(combined_message)
-            decision = llm_output.tool_call
+            # 🔑 FILL SLOT BEFORE ANY CHECK
+            workflow_name = ticket["last_decision"]["workflow"]
+            missing_slot, _ = get_missing_slot(workflow_name, ticket["facts"])
+
+            if missing_slot:
+                from utils.clarification_parser import extract_slot_value
+
+                value = extract_slot_value(missing_slot, message)
+                logger.info(f"[CLARIFICATION] extracted {missing_slot}={value}")
+
+                if value:
+                    ticket["facts"][missing_slot] = value
+
+            ticket_store.set(ticket_id, ticket)
+
+            decision = ticket["last_decision"]
 
 
-            # ──────────────────────────────
-            #fck this
-            # normalize issue_type from intent
-            # if "issue_type" not in decision["entities"]:
-            #     decision["entities"]["issue_type"] = decision["intent"]
-            # ──────────────────────────────
-            
-            # ──────────────────────────────
-            # Phase-4.1: Persist stable facts
-            # ──────────────────────────────
-            for key, value in decision["entities"].items():
-                if key in STABLE_FACTS and value != "unknown":
-                    prev["facts"][key] = value
-
-            prev["last_decision"] = decision
-            ticket_store.set(ticket_id, prev)
-
-        logger.info(f"LLM decision: {decision}")
-
-        #oh god
-        #this part is commented on 26-dec , coz its causing issues with the flow
+        logger.info(f"Decision in effect: {decision}")
 
         # ──────────────────────────────
-        # 3. Ask clarification
+        # 3. Normalize region BEFORE slot checking
         # ──────────────────────────────
-        # CONFIDENCE_THRESHOLD = 0.6
+        facts = ticket_store.get(ticket_id)["facts"]
 
-        # if (
-        #     decision["next_action"] == "ask_clarification"
-        #     and decision["confidence"] < CONFIDENCE_THRESHOLD
-        # ):
-        #     # ──────────────────────────────
-        #     # 3.1 FREEFORM CLARIFICATION (Phase-3.1)
-        #     # Emit observability event
-        #     bus.emit(ObservabilityEvent.create(
-        #         event_type="clarification_asked",
-        #         ticket_id=ticket_id,
-        #         payload={
-        #             "question": decision["clarification_question"]
-        #         }
-        #     ))
+        city = (
+            facts.get("location")
+            or facts.get("city")
+            or facts.get("region")
+        )
 
-        #     return {
-        #         "summary": decision["clarification_question"],
-        #         "workflow_result": {
-        #             "status": "needs_info",
-        #             "ticket_id": ticket_id
-        #         },
-        #         "confidence": decision["confidence"]
-        #     }
+        if city:
+            facts["region"] = normalize_region(city)
+
+        ticket_store.set(ticket_id, ticket_store.get(ticket_id))
 
         # ──────────────────────────────
-        # 3.2 SLOT-BASED CLARIFICATION (Phase-3.2)
+        # 4. Slot-based clarification
         # ──────────────────────────────
-        ticket = ticket_store.get(ticket_id)
-        facts = ticket["facts"]
         workflow_name = decision["workflow"]
-
         missing_slot, question = get_missing_slot(workflow_name, facts)
 
         if missing_slot:
-
-            #---------------------------------------------
-            # Emit observability event
             bus.emit(ObservabilityEvent.create(
                 event_type="slot_missing",
                 ticket_id=ticket_id,
@@ -232,6 +198,7 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
                     "slot": missing_slot
                 }
             ))
+
 
             return {
                 "summary": question,
@@ -242,49 +209,12 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
                 },
                 "confidence": decision["confidence"]
             }
+        logger.info(f"Decision in effect: {decision}")
 
         # ──────────────────────────────
-        # 4. Execute workflow
+        # 5. Execute workflow (DETERMINISTIC)
         # ──────────────────────────────
-        workflow = WORKFLOW_REGISTRY[decision["workflow"]]
-
-        # ──────────────────────────────
-        # 4. REGION-MAPPING (Phase-3)
-        # ──────────────────────────────
-        from utils.region_mapper import normalize_region
-
-        context = facts.copy()
-
-        city = (
-            context.get("location")
-            or context.get("city")
-            or context.get("region")
-        )
-
-        context["region"] = normalize_region(city)
-
-        #//////////////////////////////////////////////////////
-        #-------------------safety net-------------------------
-        if decision["intent"] != "unknown" and decision["confidence"] >= CONFIDENCE_THRESHOLD:
-            decision["next_action"] = "execute_workflow"
-        #------------------------------------------------------
-        #//////////////////////////////////////////////////////
-
-
-        # ──────────────────────────────
-        # Emit observability event
-
-        bus.emit(ObservabilityEvent.create(
-            event_type="workflow_selected",
-            ticket_id=ticket_id,
-            payload={
-                "workflow": decision["workflow"],
-                "context": context
-            }
-        ))
-        # ──────────────────────────────
-
-        workflow_fn = WORKFLOW_REGISTRY.get(decision["workflow"])
+        workflow_fn = WORKFLOW_REGISTRY.get(workflow_name)
 
         if workflow_fn is None:
             return {
@@ -295,12 +225,29 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
                 },
                 "confidence": decision["confidence"]
             }
+        
+        # yapping tiiimeee
+        bus.emit(ObservabilityEvent.create(
+            event_type="workflow_selected",
+            ticket_id=ticket_id,
+            payload={
+                "workflow": workflow_name,
+                "context": facts
+            }
+        ))
 
-        result = workflow_fn(context)
+        result = workflow_fn(facts)
 
+        summary = result.get("resolution")
+
+        if not summary:
+            if result["status"] == "escalated":
+                summary = "We could not identify a known network issue in your area. This has been escalated for further investigation."
+            else:
+                summary = "We checked network conditions in your area."
 
         return {
-            "summary": "Troubleshooting completed",
+            "summary": summary,
             "workflow_result": {
                 **result,
                 "ticket_id": ticket_id
@@ -308,10 +255,8 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
             "confidence": decision["confidence"]
         }
 
+
     except Exception:
-        # ──────────────────────────────
-        # Phase-5 rollback on failure
-        # ──────────────────────────────
         logger.exception("Phase-5 failure → rolling back ticket state")
 
         if ticket_snapshot is not None:
@@ -319,15 +264,11 @@ def run_workflow(message: str, ticket_id: str | None = None) -> dict:
         else:
             ticket_store.delete(ticket_id)
 
-        # ─────────────────────────────
-        # Emit observability event
         bus.emit(ObservabilityEvent.create(
             event_type="rollback_triggered",
             ticket_id=ticket_id,
-            payload={
-                "error": str(Exception)
-            }))
-        # ──────────────────────────────
+            payload={"error": "unhandled_exception"}
+        ))
 
         return {
             "summary": "Something went wrong while processing your request. Please try again.",
